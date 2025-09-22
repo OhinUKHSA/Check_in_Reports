@@ -1,3 +1,15 @@
+---
+title: "`r paste0('Professional Registration Workforce Check-in Results: ', format(Sys.Date(), '%B %Y'))`"
+format:
+  html:
+    embed-resources: true
+    page-layout: full
+    fig-cap: true
+    toc: true
+    toc-depth: 3
+editor: visual
+---
+
 <!-- 
 ---------------------------
  Script name: checkin_6Month
@@ -21,17 +33,6 @@
 -->
 
 
----
-title: "`r paste0('Professional Registration Workforce Check-in Results: ', format(Sys.Date(), '%B %Y'))`"
-format:
-  html:
-    embed-resources: true
-    page-layout: full
-    fig-cap: true
-    toc: true
-    toc-depth: 3
-editor: visual
----
 
 ```{r}
 #| echo: false
