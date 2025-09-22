@@ -1,0 +1,1241 @@
+<!-- 
+---------------------------
+ Script name: Professional_Workforce
+
+ Purpose of script:
+   Generate the monthly Professional Registration Workforce Check-in results
+   report for GMC & UKPHR registrants (latest month + interactive trends) using
+   data extracted from People Group Check-in Survey.
+
+ Author: Owen Williams
+
+ Date Created: 19/09/2025
+---------------------------
+
+ Notes:
+ - Make sure packages are installed first by running: Load_Packages.R
+ - Required data (CSV) in /data/:
+     * data.csv  — extract data from People Survey Check-In results sourced from 
+     there PowerBi dashboard 
+---------------------------
+-->
+
+---
+title: "`r paste0('Professional Registration Workforce Check-in Results: ', format(Sys.Date(), '%B %Y'))`"
+format:
+  html:
+    embed-resources: true
+    page-layout: full
+    fig-cap: true
+    toc: true
+    toc-depth: 3
+editor: visual
+---
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Libaries
+require(tidyverse)
+require(reactable)
+require(sparkline)
+require(htmltools)
+require(crosstalk)
+require(plotly)
+require(kableExtra)
+require(tsibble)
+require(knitr) 
+
+```
+
+```{r tabset-css, echo=FALSE, results='asis'}
+htmltools::tags$style(HTML("
+/* Style the tab panel content */
+.panel-tabset .panel {
+  background-color: #ffffff;
+  padding: 1rem;
+  border: 1px solid #000000;
+  border-radius: 6px;
+  margin-top: 0.5rem;
+}
+
+/* Unselected tab headers */
+.nav-tabs > li:not(.active) > a {
+  font-weight: bold;
+  color: #7a9ae6 ;
+  background-color: #ffffff ;
+  border: 1px solid #000000 ;
+}
+
+/* Selected (active) tab header */
+.nav-tabs > li.active > a,
+.nav-tabs > li.active > a:focus,
+.nav-tabs > li.active > a:hover {
+  background-color: #006666;
+  color: #ffffff ;
+  border: 1px solid #000000 ;
+}
+"))
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Description
+#* This code set 
+
+# Load and process data
+df <- read.csv("data/data.csv") %>%
+  mutate(Month = my(Month)) %>%
+  arrange(Question, Month)
+
+# Summarise per question
+df2 <- df %>%
+  group_by(Question) %>%
+  summarise(
+    GMC_UKPHR_eNPs = list(GMC_UKPHR_eNPs),
+    GMC_eNPs = list(GMC_eNPs),
+    UKPHR_eNPs = list(UKPHR_eNPs),
+    Organisation_eNPs = list(Organisation_eNPs),
+    GMC_UKPHR_Responses = list(GMC_UKPHR_Responses),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    Barchart  = GMC_UKPHR_eNPs,
+    Workforce = "GMC & UKPHR",
+    eNP       = map_dbl(Barchart, ~ tail(.x, 1)),
+    Trend     = map_chr(Barchart, ~ {
+      x <- .x
+      if (length(x) < 2 || anyNA(tail(x, 2))) return(NA_character_)
+      diff <- tail(x, 1) - tail(x, 2)[1]
+      if (diff > 0) paste("up", round(diff, 1))
+      else if (diff < 0) paste("down", round(diff, 1))
+      else "flat 0"
+    }),
+    Responses = map_dbl(GMC_UKPHR_Responses, ~ tail(.x, 1))  # <- THIS LINE
+  ) %>%
+    select(Question, Workforce, eNP, Trend, Barchart, everything())
+
+# Colour function for bars and text
+bar_colour <- function(values) {
+  sapply(values, function(v) {
+    if (v < 0) {
+      "#870703"
+    } else if (v < 20) {
+      "#f27500"
+    } else if (v < 30) {
+      "#f2c600"
+    } else {
+      "#008000"
+    }
+  })
+}
+
+# SharedData object for interactivity
+shared_df <- SharedData$new(df2, key = ~Question, group = "enp")
+
+# Extract Latest month
+last_month <- format(max(df$Month, na.rm = TRUE), '%B %Y')
+```
+
+# 1. Background
+
+This Report summarises Check - In results from professional registrants ..... during `{r} last_month`
+
+::: {#note-eNPColourCoding .callout-note collapse="true"}
+## 1.1. eNP Score Colour Coding and Interpretation
+
+```{r}
+#| echo: false
+#| warning: false
+
+# Table data as tibble
+detailTable <- tibble(
+  Range = c("Below 0", "0 – 19", "20 – 29", "30 and above"),
+  Meaning = c(
+    "More disagree than agree answers, suggesting underlying issues with engagement, culture, or leadership.",
+    "Positive score (more agree than disagree), but still room for improvement.",
+    "Solid performance, indicating decent overall engagement.",
+    "Strong indicator of high engagement and a healthy culture."
+  ),
+  Action = c(
+    "Assess – Opportunity to address",
+    "Assess – Opportunity to improve",
+    "Monitor & analyse – Opportunity to strengthen",
+    "Celebrate – Share best practice"
+  )
+)
+
+# Row background colours
+bg <- c("#870703", "#f27500", "#f2c600", "#008000")
+# Text colours for contrast
+fg <- c("white", "black", "black", "white")
+
+# Build kable table
+k <- detailTable %>%
+  kable("html", align = c("l", "l", "l")) %>%
+  kable_styling(full_width = FALSE, bootstrap_options = c("condensed"))
+
+# Apply row colours
+for (i in seq_len(nrow(detailTable))) {
+  k <- row_spec(k, i, background = bg[i], color = fg[i], bold = TRUE)
+}
+
+k
+```
+:::
+
+# 2. Summary Table of Latest Months Engagement Net Promoter Scores (eNPs)
+
+This table presents the latest eNP (engagement Net Promoter) scores from the check-in survey completed monthly by staff with GMC and UKPHR registrations. This has a five level scoring system as detailed [here](#note-eNPColourCoding).
+
+The table shows the following information:
+
+-   **eNP score:** Shows the current score for each survey question, reflecting the most recent month's responses.
+-   **Trend:** Indicates whether the eNP score has increased, decreased, or remained the same compared to the previous month.
+-   **Bar chart:** Provides a month-on-month visual of how eNP scores have changed over time (a more detailed breakdown is available below).
+
+You can expand any question row by clicking the ▸ (sideways triangle) to the left of the table. This will give a detailed breakdown by registrant type (GMC, UKPHR, or Organisation), showing their respective eNP scores, trends, and mini-bar charts.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Description
+#* Creating reactable table which details Current months eNP check-in score from
+#* combined GMC and UKPHR per question. This also has a drop down option for 
+#* further detail at each question looking at individual GMC, UKPHR and whole 
+#* organisation scores
+#* 
+
+# Create function to show bar chart for enp scores
+bar_chart_pos_neg <- function(label, value, max_value = 100, height = "1rem") {
+  neg_chart <- div(style = list(flex = "1 1 0"))
+  pos_chart <- div(style = list(flex = "1 1 0"))
+
+  width <- paste0(abs(value / max_value) * 100, "%")
+  fill_color <- bar_colour(value)  # Get color based on value
+
+  if (value < 0) {
+    bar <- div(style = list(marginLeft = "0.5rem", background = fill_color, width = width, height = height))
+    chart <- div(
+      style = list(display = "flex", alignItems = "center", justifyContent = "flex-end"),
+      label,
+      bar
+    )
+    neg_chart <- tagAppendChild(neg_chart, chart)
+  } else {
+    bar <- div(style = list(marginRight = "0.5rem", background = fill_color, width = width, height = height))
+    chart <- div(style = list(display = "flex", alignItems = "center"), bar, label)
+    pos_chart <- tagAppendChild(pos_chart, chart)
+  }
+
+  div(style = list(display = "flex"), neg_chart, pos_chart)
+}
+
+# Reactable table 1
+reactable(
+  shared_df,
+  bordered = TRUE,
+  columns = list(
+    Question = colDef(
+      name = "Question",
+      minWidth = 200,
+      style = function(value, index, name) {
+        latest_value <- tail(shared_df$data()$GMC_UKPHR_eNPs[[index]], 1)
+        colour <- bar_colour(latest_value)
+        list(
+          whiteSpace = "normal",
+          background = colour,
+          color = if (colour %in% c("#f27500", "#f2c600")) "black" else "white",
+          padding = "4px",
+          borderRadius = "4px"
+        )
+      }
+    ),
+    Workforce = colDef(
+      name = "Workforce",
+      width = 120,
+      align = "center",
+      cell = function(value, index) {
+        latest_value <- tail(shared_df$data()$GMC_UKPHR_eNPs[[index]], 1)
+        colour <- bar_colour(latest_value)
+        div(
+          style = paste0("color:", colour, "; font-weight: bold;"),
+          value
+        )
+      }
+    ),
+    eNP = colDef(
+      name = "eNP Score",
+      cell = function(value) {
+        label <- value
+        bar_chart_pos_neg(label, value)
+      },
+      align = "center",
+      minWidth = 150
+    ),
+    Trend = colDef(
+      name = "Trend",
+      width = 80,
+      align = "center",
+      cell = function(value) {
+        if (is.na(value)) return("")
+        parts <- strsplit(value, " ")[[1]]
+        direction <- parts[1]
+        delta <- parts[2]
+
+        if (direction == "up") {
+          span(paste0("▲ +", delta), style = "color: green; font-weight: bold;")
+        } else if (direction == "down") {
+          span(paste0("▼ ", delta), style = "color: red; font-weight: bold;")
+        } else {
+          span("–", style = "color: #888;")
+        }
+      }
+    ),
+    Barchart = colDef(
+      name = "Bar chart",
+      width = 100,
+      align = "center",
+      cell = function(value, index) {
+        sparkline(
+          shared_df$data()$GMC_UKPHR_eNPs[[index]],
+          type = "bar",
+          chartRangeMin = -100,
+          chartRangeMax = 100,
+          barColor = bar_colour(shared_df$data()$GMC_UKPHR_eNPs[[index]])
+        )
+      }
+    ),
+    GMC_UKPHR_Responses = colDef(show = FALSE),
+    GMC_UKPHR_eNPs = colDef(show = FALSE),
+    GMC_eNPs = colDef(show = FALSE),
+    UKPHR_eNPs = colDef(show = FALSE),
+    Organisation_eNPs = colDef(show = FALSE),
+    Responses = colDef(show = FALSE)
+  ), 
+  theme = reactableTheme(
+    headerStyle = list(
+      backgroundColor = "black",
+      color = "white",
+      fontWeight = "bold"
+    )
+  ),
+  details = function(index) {
+    nested_df <- tibble(
+      Workforce = c("GMC", "UKPHR", "Organisation"),
+      eNP = c(
+        tail(shared_df$data()$GMC_eNPs[[index]], 1),
+        tail(shared_df$data()$UKPHR_eNPs[[index]], 1),
+        tail(shared_df$data()$Organisation_eNPs[[index]], 1)
+      ),
+      Trend = map_chr(list(
+        shared_df$data()$GMC_eNPs[[index]],
+        shared_df$data()$UKPHR_eNPs[[index]],
+        shared_df$data()$Organisation_eNPs[[index]]
+      ), ~ {
+        x <- .x
+        if (length(x) < 2 || anyNA(tail(x, 2))) return(NA_character_)
+        diff <- tail(x, 1) - tail(x, 2)[1]
+        if (diff > 0) paste("up", round(diff, 1))
+        else if (diff < 0) paste("down", round(diff, 1))
+        else "flat 0"
+      }),
+      Barchart = list(
+        shared_df$data()$GMC_eNPs[[index]],
+        shared_df$data()$UKPHR_eNPs[[index]],
+        shared_df$data()$Organisation_eNPs[[index]]
+      )
+    )
+
+    reactable(
+      nested_df,
+      bordered = TRUE,
+      columns = list(
+        Workforce = colDef(
+          name = "Workforce",
+          width = 150,
+          align = "center",
+          cell = function(value, index) {
+            latest_value <- tail(nested_df$Barchart[[index]], 1)
+            colour <- bar_colour(latest_value)
+            div(style = paste0("color:", colour, "; font-weight: bold;"), value)
+          }
+        ),
+        Barchart = colDef(
+          name = "Barchart",
+          width = 100,
+          align = "center",
+          cell = function(values) {
+            sparkline(
+              values,
+              type = "bar",
+              chartRangeMin = -100,
+              chartRangeMax = 100,
+              barColor = bar_colour(values)
+            )
+          }
+        ),
+        eNP = colDef(
+          name = "eNP Score",
+          cell = function(value) {
+            label <- value
+            bar_chart_pos_neg(label, value)
+            },
+          align = "center",
+          minWidth = 300
+          ), 
+        Trend = colDef(
+          name = "Trend",
+          align = "center",
+          width = 100,
+          cell = function(value) {
+            if (is.na(value)) return("")
+            parts <- strsplit(value, " ")[[1]]
+            direction <- parts[1]
+            delta <- parts[2]
+
+            if (direction == "up") {
+              span(paste0("▲ +", delta), style = "color: green; font-weight: bold;")
+            } else if (direction == "down") {
+              span(paste0("▼ ", delta), style = "color: red; font-weight: bold;")
+            } else {
+              span("–", style = "color: #888;")
+            }
+          }
+        )
+      ),
+      borderless = TRUE,
+      highlight = TRUE,
+      compact = TRUE,
+      theme = reactableTheme(
+        headerStyle = list(
+          backgroundColor = "grey",
+          color = "white",
+          fontWeight = "bold"
+          )
+        )
+    )
+    }
+  )
+
+```
+
+# 3. Question-Level eNP Trends
+
+Use the dropdown and checkboxes to filter the data by **Question** and **Date**. The interactive figure and table will update automatically to show all monthly values for your selected criteria, allowing you to track changes in eNP scores over time.
+
+Switch between the different **tabs** to explore results for each workforce group: GMC & UKPHR, GMC, UKPHR, and Organisation.
+
+::: callout-important
+## 3.1. eNP Score Colour Coding and Interpretation
+
+Select a **Check-In Question** and **Date Range** from the dropdown menu and checkboxes below to filter data accordingly.
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Description
+#* This code set provide interactivity allowing user to select question to look
+#* at how this changes overtime. 
+#* 
+#* Combined with code below this will provide access to all workforce group data
+
+
+# Make Question a factor with the default level FIRST
+df3_full <- df %>%
+  select(Question, Month,
+         GMC_UKPHR_eNPs, GMC_UKPHR_Responses,
+         GMC_eNPs, GMC_Responses, UKPHR_eNPs, UKPHR_Responses,
+         Organisation_eNPs, Organisation_Responses) %>% 
+         # Create new filter column for formatted date
+  mutate(
+    Month = as.Date(Month),
+    Month_label = format(Month, '%B %Y')
+  ) %>%
+  arrange(Question, Month) %>%
+  mutate(
+    Month_label = factor(Month_label, levels = unique(Month_label))
+  )
+
+# Create shared data object
+shared_df3_full <- SharedData$new(df3_full)
+
+
+# position and create filters for data 
+bscols(
+  widths = c(8,4),
+  # Create filter for Question
+  filter_select(
+    id       = "question_filter",
+    label    = "Choose a Question:",
+    shared   = shared_df3_full,
+    ~Question,
+    multiple = FALSE
+    ),
+  # create checkbox filter for Month
+  filter_checkbox(
+    id = "Date",
+    label = "Select Date Range",
+    sharedData = shared_df3_full,
+    group = ~Month_label,
+    columns = 2
+    )
+  )
+
+
+
+```
+:::
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Description
+#* Creating interactive figures for each of the workforce Groups based on the filters
+
+# Create Colour scheme for data points
+color_fun <- function(vals) {
+  sapply(vals, function(v) {
+    if (v < 0) "#870703"
+    else if (v < 20) "#f27500"
+    else if (v < 30) "#f2c600"
+    else "#008000"
+  })
+}
+
+
+# colour scheme for organisation 
+color_fun_organ <- function(vals) {
+  sapply(vals, function(v) {
+    if (v < 0) "#fd9e9b"
+    else if (v < 20) "#ffd7b3"
+    else if (v < 30) "#fff0b3"
+    else "#b3ffb3"
+  })
+}
+
+
+#############################
+# Plot for GMC & UKPHR eNPs #
+#############################
+
+Combined_plot <- plot_ly(
+  shared_df3_full,
+  x = ~Month,
+  y = ~GMC_UKPHR_eNPs,
+  type = "scatter",
+  mode = "lines+markers",
+  marker = list(color = color_fun(shared_df3_full$data()$GMC_UKPHR_eNPs), size = 10),
+  line = list(color = '#006666'),
+  hoverinfo = "text",
+  text = ~paste(
+    "<br>Question:", Question,
+    "<br>GMC_UKPHR eNPs:", GMC_UKPHR_eNPs,
+    "<br>Month:", format(Month, '%B %Y'),
+    "<br>Responses:", GMC_UKPHR_Responses
+  ),
+  name = "GMC_UKPHR eNPs"
+) %>%
+  add_trace(
+    y = ~Organisation_eNPs,
+    type = "scatter",
+    mode = "lines+markers",
+    marker = list(color = color_fun_organ(shared_df3_full$data()$Organisation_eNPs), size = 10),
+    line = list(color = "#ff91ff", dash = "dash"),
+    hoverinfo = "text",
+    text = ~paste(
+      "<br>Question:", Question,
+      "<br>Organisation eNPs:", Organisation_eNPs,
+      "<br>Month:", format(Month, '%B %Y'),
+      "<br>Responses:", Organisation_Responses
+    ),
+    name = "Organisation eNPs"
+  ) %>%
+  layout(
+    title = "GMC & UKPHR eNPs Trend",
+    xaxis = list(
+      title = "Month",
+      type = "date",
+      tickformat = "%b %Y",
+      dtick = "M1",
+      tickangle = -45
+    ),
+    yaxis = list(
+      title = "eNPs",
+      range = c(-100, 100)
+    ),
+    legend = list(
+      title = list(text = "Group"),
+      orientation = 'h',
+      x = 0.5,
+      xanchor = "center",
+      y = -0.3,
+      yanchor = "top"
+      ),
+    margin = list(b = 100)
+    )
+
+
+#####################
+# Plot for GMC eNPs #
+#####################
+
+GMC_plot <- plot_ly(
+  shared_df3_full,
+  x = ~Month,
+  y = ~GMC_eNPs,
+  type = "scatter",
+  mode = "lines+markers",
+  marker = list(color = color_fun(shared_df3_full$data()$GMC_eNPs), size = 10),
+  line = list(color = '#006666'),
+  hoverinfo = "text",
+  text = ~paste(
+    "<br>Question:", Question,
+    "<br>GMC eNPs:", GMC_eNPs,
+    "<br>Month:", format(Month, '%B %Y'),
+    "<br>Responses:", GMC_Responses
+  ),
+  name = "GMC eNPs"
+) %>%
+  add_trace(
+    y = ~Organisation_eNPs,
+    type = "scatter",
+    mode = "lines+markers",
+    marker = list(color = color_fun_organ(shared_df3_full$data()$Organisation_eNPs), size = 10),
+    line = list(color = "#ff91ff", dash = "dash"),
+    hoverinfo = "text",
+    text = ~paste(
+      "<br>Question:", Question,
+      "<br>Organisation eNPs:", Organisation_eNPs,
+      "<br>Month:", format(Month, '%B %Y'),
+      "<br>Responses:", Organisation_Responses
+    ),
+    name = "Organisation eNPs"
+  ) %>%
+  layout(
+    title = "GMC eNPs Trend",
+    xaxis = list(
+      title = "Month",
+      type = "date",
+      tickformat = "%b %Y",
+      dtick = "M1",
+      tickangle = -45
+    ),
+    yaxis = list(
+      title = "eNPs",
+      range = c(-100, 100)
+    ),
+    legend = list(
+      title = list(text = "Group"),
+      orientation = 'h',
+      x = 0.5,
+      xanchor = "center",
+      y = -0.3,
+      yanchor = "top"
+      ),
+    margin = list(b = 100)
+    )
+
+
+
+
+#######################
+# Plot for UKPHR eNPs #
+#######################
+
+UKPHR_plot <- plot_ly(
+  shared_df3_full,
+  x = ~Month,
+  y = ~UKPHR_eNPs,
+  type = "scatter",
+  mode = "lines+markers",
+  marker = list(color = color_fun(shared_df3_full$data()$UKPHR_eNPs), size = 10),
+  line = list(color = '#006666'),
+  hoverinfo = "text",
+  text = ~paste(
+    "<br>Question:", Question,
+    "<br>UKPHR eNPs:", UKPHR_eNPs,
+    "<br>Month:", format(Month, '%B %Y'),
+    "<br>Responses:", UKPHR_Responses
+  ),
+  name = "UKPHR eNPs"
+) %>%
+  add_trace(
+    y = ~Organisation_eNPs,
+    type = "scatter",
+    mode = "lines+markers",
+    marker = list(color = color_fun_organ(shared_df3_full$data()$Organisation_eNPs), size = 10),
+    line = list(color = "#ff91ff", dash = "dash"),
+    hoverinfo = "text",
+    text = ~paste(
+      "<br>Question:", Question,
+      "<br>Organisation eNPs:", Organisation_eNPs,
+      "<br>Month:", format(Month, '%B %Y'),
+      "<br>Responses:", Organisation_Responses
+    ),
+    name = "Organisation eNPs"
+  ) %>%
+  layout(
+    title = "UKPHR eNPs Trend",
+    xaxis = list(
+      title = "Month",
+      type = "date",
+      tickformat = "%b %Y",
+      dtick = "M1",
+      tickangle = -45
+    ),
+    yaxis = list(
+      title = "eNPs",
+      range = c(-100, 100)
+    ),
+    legend = list(
+      title = list(text = "Group"),
+      orientation = 'h',
+      x = 0.5,
+      xanchor = "center",
+      y = -0.3,
+      yanchor = "top"
+      ),
+    margin = list(b = 100)
+    )
+
+
+####################################
+# Plot for whole organisation eNPs #
+####################################
+
+Organisation_plot <- plot_ly(
+  shared_df3_full,
+  x = ~Month,
+  y = ~Organisation_eNPs,
+  type = "scatter",
+  mode = "lines+markers",
+  marker = list(color = color_fun(shared_df3_full$data()$Organisation_eNPs), size = 10),
+  line = list(color = "#ff91ff", dash = "dash"),
+  hoverinfo = "text",
+  text = ~paste(
+    "<br>Question:", Question,
+    "<br>eNPs:", Organisation_eNPs,
+    "<br>Month:", format(Month, '%B %Y'),
+    "<br>Responses:", Organisation_Responses
+  )
+) %>%
+  layout(
+    title = "Organisation eNPs Trend",
+    xaxis = list(title = "Month",
+                 type = "date",
+                 tickformat = "%b %Y",
+                 dtick = "M1",
+                 tickangle = -45),
+    yaxis = list(title = "GMC eNPs",
+                 range = c(-100, 100))
+  )
+
+
+```
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Description
+#* Creating interactive Tables for each of the workforce Groups based on the filters
+
+# set colour scheme
+get_color <- function(v) {
+  if (v < 0) {
+    "#870703"
+  } else if (v < 20) {
+    "#f27500"
+  } else if (v < 30) {
+    "#f2c600"
+  } else {
+    "#008000"
+  }
+}
+
+##################
+# Combined Table #
+##################
+
+combined_table = reactable(
+  shared_df3_full,
+  bordered = TRUE,
+  columns = list(
+    # Question = colDef(name = "Question", minWidth = 200),
+  Question = colDef(
+    name = "Question",
+    minWidth = 200,
+    style = function(value, index, name) {
+      # Extract the Organisation_eNPs list for this row
+      enp_values <- shared_df3_full$data()$GMC_UKPHR_eNPs[[index]]
+      if (is.null(enp_values) || length(enp_values) == 0 || all(is.na(enp_values))) {
+        colour <- "#cccccc" 
+        } else {
+          latest_value <- tail(enp_values, 1)
+          colour <- bar_colour(latest_value)
+          }
+      list(
+        whiteSpace = "normal",
+        background = colour,
+        color = if (colour %in% c("#f27500", "#f2c600")) "black" else "white",
+        padding = "4px",
+        borderRadius = "4px"
+        )
+      }
+    ),
+  Month = colDef(
+      name = "Month",
+      align = "center",
+      cell = function(value) {
+        format(as.Date(value), "%B %Y")
+      }
+    ),
+    GMC_UKPHR_eNPs = colDef(
+      name = "GMC & UKPHR eNPs",
+      cell = function(value) {
+        label <- value
+        bar_chart_pos_neg(label, value)
+      },
+      align = "center",
+      minWidth = 150
+    ),
+    GMC_UKPHR_Responses = colDef(
+      name = "Responses",
+      align = "center"),
+    GMC_eNPs = colDef(show = FALSE),
+    GMC_Responses = colDef(show = FALSE),
+    UKPHR_eNPs = colDef(show = FALSE),
+    UKPHR_Responses = colDef(show = FALSE),
+    Organisation_Responses = colDef(show = FALSE),
+    Organisation_eNPs = colDef(show = FALSE),
+    Month_label = colDef(show = FALSE)
+  ),
+  defaultSorted = "Month",
+  pagination = FALSE,
+  compact = TRUE,
+  highlight = TRUE,
+  theme = reactableTheme(
+    headerStyle = list(
+      backgroundColor = "black",
+      color = "white",
+      fontWeight = "bold"
+    )
+  )
+)
+
+##################
+# GMC Table #
+##################
+
+GMC_table = reactable(
+  shared_df3_full,
+  bordered = TRUE,
+  columns = list(
+    Question = colDef(
+    name = "Question",
+    minWidth = 200,
+    style = function(value, index, name) {
+      # Extract the Organisation_eNPs list for this row
+      enp_values <- shared_df3_full$data()$GMC_eNPs[[index]]
+      if (is.null(enp_values) || length(enp_values) == 0 || all(is.na(enp_values))) {
+        colour <- "#cccccc" 
+        } else {
+          latest_value <- tail(enp_values, 1)
+          colour <- bar_colour(latest_value)
+          }
+      list(
+        whiteSpace = "normal",
+        background = colour,
+        color = if (colour %in% c("#f27500", "#f2c600")) "black" else "white",
+        padding = "4px",
+        borderRadius = "4px"
+      )
+      }
+    ), 
+    Month = colDef(
+      name = "Month",
+      align = "center",
+      cell = function(value) {
+        format(as.Date(value), "%B %Y")
+      }
+    ),
+    GMC_eNPs = colDef(
+      name = "GMC eNPs",
+      cell = function(value) {
+        label <- value
+        bar_chart_pos_neg(label, value)
+      },
+      align = "center",
+      minWidth = 150
+    ),
+    GMC_Responses = colDef(
+      name = "Responses",
+      align = "center"),
+    GMC_UKPHR_eNPs = colDef(show = FALSE),
+    GMC_UKPHR_Responses = colDef(show = FALSE),
+    UKPHR_eNPs = colDef(show = FALSE),
+    UKPHR_Responses = colDef(show = FALSE),
+    Organisation_Responses = colDef(show = FALSE),
+    Organisation_eNPs = colDef(show = FALSE),
+    Month_label = colDef(show = FALSE)
+  ),
+  defaultSorted = "Month",
+  pagination = FALSE,
+  compact = TRUE,
+  highlight = TRUE,
+  theme = reactableTheme(
+    headerStyle = list(
+      backgroundColor = "black",
+      color = "white",
+      fontWeight = "bold"
+    )
+  )
+)
+
+
+##################
+# UKPHR Table #
+##################
+
+UKPHR_table = reactable(
+  shared_df3_full,
+  bordered = TRUE,
+  columns = list(
+    # Question = colDef(name = "Question", minWidth = 200),
+    Question = colDef(
+    name = "Question",
+    minWidth = 200,
+    style = function(value, index, name) {
+      # Extract the Organisation_eNPs list for this row
+      enp_values <- shared_df3_full$data()$UKPHR_eNPs[[index]]
+      if (is.null(enp_values) || length(enp_values) == 0 || all(is.na(enp_values))) {
+        colour <- "#cccccc" 
+        } else {
+          latest_value <- tail(enp_values, 1)
+          colour <- bar_colour(latest_value)
+          }
+      list(
+        whiteSpace = "normal",
+        background = colour,
+        color = if (colour %in% c("#f27500", "#f2c600")) "black" else "white",
+        padding = "4px",
+        borderRadius = "4px"
+        )
+      }
+    ),
+    Month = colDef(
+      name = "Month",
+      align = "center",
+      cell = function(value) {
+        format(as.Date(value), "%B %Y")
+      }
+    ),
+    UKPHR_eNPs = colDef(
+      name = "UKPHR eNPs",
+      cell = function(value) {
+        label <- value
+        bar_chart_pos_neg(label, value)
+      },
+      align = "center",
+      minWidth = 150
+    ),
+    UKPHR_Responses = colDef(
+      name = "Responses",
+      align = "center"),
+    GMC_UKPHR_eNPs = colDef(show = FALSE),
+    GMC_UKPHR_Responses = colDef(show = FALSE),
+    GMC_eNPs = colDef(show = FALSE),
+    GMC_Responses = colDef(show = FALSE),
+    Organisation_Responses = colDef(show = FALSE),
+    Organisation_eNPs = colDef(show = FALSE),
+    Month_label = colDef(show = FALSE)
+  ),
+  defaultSorted = "Month",
+  pagination = FALSE,
+  compact = TRUE,
+  highlight = TRUE,
+  theme = reactableTheme(
+    headerStyle = list(
+      backgroundColor = "black",
+      color = "white",
+      fontWeight = "bold"
+    )
+  )
+)
+
+#####################
+# Organisaton Table #
+#####################
+
+Organisation_table = reactable(
+  shared_df3_full,
+  bordered = TRUE,
+  columns = list(
+    # Question = colDef(name = "Question", minWidth = 200),
+    Question = colDef(
+    name = "Question",
+    minWidth = 200,
+    style = function(value, index, name) {
+      # Extract the Organisation_eNPs list for this row
+      enp_values <- shared_df3_full$data()$Organisation_eNPs[[index]]
+      if (is.null(enp_values) || length(enp_values) == 0 || all(is.na(enp_values))) {
+        colour <- "#cccccc" 
+        } else {
+          latest_value <- tail(enp_values, 1)
+          colour <- bar_colour(latest_value)
+          }
+      list(
+        whiteSpace = "normal",
+        background = colour,
+        color = if (colour %in% c("#f27500", "#f2c600")) "black" else "white",
+        padding = "4px",
+        borderRadius = "4px"
+        )
+      }
+    ),
+    Month = colDef(
+      name = "Month",
+      align = "center",
+      cell = function(value) {
+        format(as.Date(value), "%B %Y")
+      }
+    ), Organisation_eNPs = colDef(
+      name = "Organisation eNPs",
+      cell = function(value) {
+        label <- value
+        bar_chart_pos_neg(label, value)
+      },
+      align = "center",
+      minWidth = 150
+    ),
+    Organisation_Responses = colDef(
+      name = "Responses",
+      align = "center"),
+    GMC_UKPHR_eNPs = colDef(show = FALSE),
+    GMC_UKPHR_Responses = colDef(show = FALSE),
+    GMC_eNPs = colDef(show = FALSE),
+    GMC_Responses = colDef(show = FALSE),
+    UKPHR_eNPs = colDef(show = FALSE),
+    UKPHR_Responses = colDef(show = FALSE),
+    Month_label = colDef(show = FALSE)
+  ),
+  defaultSorted = "Month",
+  pagination = FALSE,
+  compact = TRUE,
+  highlight = TRUE,
+  theme = reactableTheme(
+    headerStyle = list(
+      backgroundColor = "black",
+      color = "white",
+      fontWeight = "bold"
+    )
+  )
+)
+
+```
+
+::::::::::::::: panel-tabset
+### GMC and UKPHR
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+Combined_plot
+```
+:::
+
+<!-- Add vertical space -->
+
+::: {style="margin-top: 40px;"}
+:::
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+combined_table
+```
+:::
+
+### GMC
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+GMC_plot
+```
+:::
+
+<!-- Add vertical space -->
+
+::: {style="margin-top: 40px;"}
+:::
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+GMC_table
+
+```
+:::
+
+### UKPHR
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+UKPHR_plot
+
+```
+:::
+
+<!-- Add vertical space -->
+
+::: {style="margin-top: 40px;"}
+:::
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+UKPHR_table
+
+```
+:::
+
+### Organisation
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+Organisation_plot
+```
+:::
+
+<!-- Add vertical space -->
+
+::: {style="margin-top: 40px;"}
+:::
+
+::: cell
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+Organisation_table
+
+```
+:::
+:::::::::::::::
+
+------------------------------------------------------------------------
+
+# 4. Responses
+
+This section shows month-on-month number of respondents from GMC and UKPHR who have completed the People Check-In survey
+
+Use checkbox to filter Professional workforce group.
+
+::: callout-important
+## 4.1. Select Professional Work force Group
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Create Response Table
+ResponseTable = df %>% 
+  select(!c(GMC_eNPs, UKPHR_eNPs, GMC_UKPHR_eNPs, Organisation_eNPs)) %>%
+  filter(Question == 'How would you classify your mental health') %>%
+  pivot_longer(cols = !c(Month, Question), names_to = 'Group', values_to = 'Participation') %>%
+  mutate(Month = yearmonth(Month)) %>%
+  filter(Group != 'Organisation_Responses') %>%
+  as_tsibble(index = Month, key = Group)
+
+
+# Convert to shared
+shared_Response = SharedData$new(ResponseTable)
+
+# create filter for 
+
+filter_checkbox(
+    id = "Date",
+    label = "Select Group",
+    sharedData = shared_Response,
+    group = ~Group
+    )
+
+```
+:::
+
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+
+# Create figure
+  plot_ly(
+  data = shared_Response,
+  x = ~as.Date(Month),
+  y = ~Participation,
+  color = ~Group,
+  type = 'scatter',
+  mode = 'lines+markers',
+  line = list(width = 2),
+  marker = list(size = 8),
+  hoverinfo = "text",
+  text = ~paste(
+    "<br>Participation:", Participation,
+    "<br>Month:", format(as.Date(Month), '%B %Y')
+  )
+) %>%
+  layout(
+    title = "Professional Registration Check-In Responses Month-on-Month",
+    xaxis = list(
+      title = "Month",
+      tickformat = "%b %Y",
+      dtick = "M1",
+      tickangle = -45
+    ),
+    yaxis = list(title = "Responses", range = c(0, 80), dtick = 20),
+    legend = list(title = list(text = "Group"), orientation = 'h',
+                  x = 0.5, xanchor = "center", y = -0.3, yanchor = "top"),
+    margin = list(b = 100)
+  )
+
+
+
+
+```
