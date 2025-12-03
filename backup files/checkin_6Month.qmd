@@ -512,7 +512,6 @@ SharedTable = function(data) {
       sample.Size = colDef(name = "No. Months"),
       Correlation = colDef(
         name   = "Correlation",
-        minWidth = 100,
         format = colFormat(digits = 3),
         style  = function(value) {
           bg <- corr_bg(as.numeric(value))
@@ -700,6 +699,7 @@ ResponseTable = df %>%
   filter(Question == 'How would you classify your mental health') %>%
   pivot_longer(cols = !c(Month, Question), names_to = 'Group', values_to = 'Participation') %>%
   mutate(Month = yearmonth(Month)) %>%
+  filter(Group != 'Organisation_Responses') %>%
   as_tsibble(index = Month, key = Group)
 
 
@@ -723,26 +723,16 @@ filter_checkbox(
 #| message: false
 #| warning: false
 
-# Create colour pallete for groups
-pal <- c(
-  "#12436D", # dark-blue
-  "#28A197", # turquoise
-  "#801650", # dark-pink
-  "#F46A25"  # orange
-)
-
-
-# create plotly figure
-plot_ly(
+# Create figure
+  plot_ly(
   data = shared_Response,
   x = ~as.Date(Month),
   y = ~Participation,
-  color = ~Group,         
-  colors = pal,            
+  color = ~Group,
   type = 'scatter',
   mode = 'lines+markers',
-  line = list(width = 2),  
-  marker = list(size = 8), 
+  line = list(width = 2),
+  marker = list(size = 8),
   hoverinfo = "text",
   text = ~paste(
     "<br>Participation:", Participation,
@@ -757,15 +747,12 @@ plot_ly(
       dtick = "M1",
       tickangle = -45
     ),
-    yaxis = list(title = "Responses", range = c(0, NULL), dtick = 20),
-    legend = list(
-      title = list(text = "Group"),
-      orientation = 'h',
-      x = 0.5, xanchor = "center",
-      y = -0.3, yanchor = "top"
-    ),
+    yaxis = list(title = "Responses", range = c(0, 80), dtick = 20),
+    legend = list(title = list(text = "Group"), orientation = 'h',
+                  x = 0.5, xanchor = "center", y = -0.3, yanchor = "top"),
     margin = list(b = 100)
   )
+
 
 
 

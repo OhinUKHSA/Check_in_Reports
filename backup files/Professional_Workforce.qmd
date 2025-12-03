@@ -10,7 +10,6 @@ format:
 editor: visual
 ---
 
-```{=html}
 <!-- 
 ---------------------------
  Script name: Professional_Workforce
@@ -32,7 +31,8 @@ editor: visual
      there PowerBi dashboard 
 ---------------------------
 -->
-```
+
+
 
 ```{r}
 #| echo: false
@@ -215,7 +215,6 @@ You can expand any question row by clicking the ▸ (sideways triangle) to the l
 #* organisation scores
 #* 
 
-
 # Create function to show bar chart for enp scores
 bar_chart_pos_neg <- function(label, value, max_value = 100, height = "1rem") {
   neg_chart <- div(style = list(flex = "1 1 0"))
@@ -307,23 +306,22 @@ reactable(
       width = 100,
       align = "center",
       cell = function(value, index) {
-        values <- shared_df$data()$GMC_UKPHR_eNPs[[index]]
-
         sparkline(
-          values,
+          shared_df$data()$GMC_UKPHR_eNPs[[index]],
           type = "bar",
           chartRangeMin = -100,
           chartRangeMax = 100,
-          # key line: per-bar colours based on the values
-          colorMap = bar_colour(values)
-          )}),
+          barColor = bar_colour(shared_df$data()$GMC_UKPHR_eNPs[[index]])
+        )
+      }
+    ),
     GMC_UKPHR_Responses = colDef(show = FALSE),
     GMC_UKPHR_eNPs = colDef(show = FALSE),
     GMC_eNPs = colDef(show = FALSE),
     UKPHR_eNPs = colDef(show = FALSE),
     Organisation_eNPs = colDef(show = FALSE),
     Responses = colDef(show = FALSE)
-    ), 
+  ), 
   theme = reactableTheme(
     headerStyle = list(
       backgroundColor = "black",
@@ -382,8 +380,10 @@ reactable(
               type = "bar",
               chartRangeMin = -100,
               chartRangeMax = 100,
-              colorMap = bar_colour(values)
-            )}),
+              barColor = bar_colour(values)
+            )
+          }
+        ),
         eNP = colDef(
           name = "eNP Score",
           cell = function(value) {
@@ -1183,6 +1183,7 @@ ResponseTable = df %>%
   filter(Question == 'How would you classify your mental health') %>%
   pivot_longer(cols = !c(Month, Question), names_to = 'Group', values_to = 'Participation') %>%
   mutate(Month = yearmonth(Month)) %>%
+  filter(Group != 'Organisation_Responses') %>%
   as_tsibble(index = Month, key = Group)
 
 
@@ -1206,26 +1207,16 @@ filter_checkbox(
 #| message: false
 #| warning: false
 
-# Create colour pallete for groups
-pal <- c(
-  "#12436D", # dark-blue
-  "#28A197", # turquoise
-  "#801650", # dark-pink
-  "#F46A25"  # orange
-)
-
-
-# create plotly figure
-plot_ly(
+# Create figure
+  plot_ly(
   data = shared_Response,
   x = ~as.Date(Month),
   y = ~Participation,
-  color = ~Group,         
-  colors = pal,            
+  color = ~Group,
   type = 'scatter',
   mode = 'lines+markers',
-  line = list(width = 2),  
-  marker = list(size = 8), 
+  line = list(width = 2),
+  marker = list(size = 8),
   hoverinfo = "text",
   text = ~paste(
     "<br>Participation:", Participation,
@@ -1240,15 +1231,12 @@ plot_ly(
       dtick = "M1",
       tickangle = -45
     ),
-    yaxis = list(title = "Responses", range = c(0, NULL), dtick = 20),
-    legend = list(
-      title = list(text = "Group"),
-      orientation = 'h',
-      x = 0.5, xanchor = "center",
-      y = -0.3, yanchor = "top"
-    ),
+    yaxis = list(title = "Responses", range = c(0, 80), dtick = 20),
+    legend = list(title = list(text = "Group"), orientation = 'h',
+                  x = 0.5, xanchor = "center", y = -0.3, yanchor = "top"),
     margin = list(b = 100)
   )
+
 
 
 
